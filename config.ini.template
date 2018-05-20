@@ -3,13 +3,13 @@ log_level = INFO
 log_file = edbot.log
 #Folder to save images posted to gallery
 gallery_folder = Gallery
+scrape_gallery = True
+post_galnet_news = True
 
 
 [discord]
 # Bot auth token. Can be found in your bots information at https://discordapp.com/developers/applications/me
 auth_token =
-scrape_gallery = True
-post_galnet_news = True
 # Type \#<channel name> into discord chat to get the channel ID.
 # Paste only the numbers below not the surrounding "<#" and ">"
 gallery_channel_id =
@@ -23,4 +23,7 @@ check_interval = 300
 
 #NOT IMPLEMENTED YET
 [wordpress]
-url = https://ooc.space
+url =
+# Use elite dangerous IGT for rss news timestamps
+news_timestamp_use_igt = True
+

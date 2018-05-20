@@ -7,6 +7,7 @@ from os import path
 from shutil import copyfileobj
 
 import discord
+import feedparser
 import moment
 import requests
 
@@ -15,7 +16,7 @@ config = configparser.ConfigParser()
 config.read('config.ini')
 
 # Setup Logging
-log_level = logging.getLevelName(config['general']['log_level'])
+log_level = logging.getLevelName(config.get('general', 'log_level'))
 logger = logging.getLogger("EDBot")
 logger.setLevel(log_level)
 logFormatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -26,7 +27,7 @@ console_handler.setLevel(log_level)
 console_handler.setFormatter(logFormatter)
 
 # Log to File
-file_handler = logging.FileHandler(config['general']['log_file'])
+file_handler = logging.FileHandler(config.get('general', 'log_file'))
 file_handler.setLevel(log_level)
 file_handler.setFormatter(logFormatter)
 
@@ -65,7 +66,11 @@ async def on_message(message):
         return
 
     # listen for new messages in the defined gallery channel that have attachments.
-    elif message.channel.id == config['discord']['gallery_channel_id'] and message.attachments:
+    elif (
+            config.get('general', 'scrape_gallery')
+            and message.channel.id == config.get('discord', 'gallery_channel_id')
+            and message.attachments
+    ):
         logger.info("New gallery post by {0}".format(message.author))
         # iterate over attachments in the message
         for attachment in message.attachments:
@@ -86,10 +91,10 @@ async def on_message(message):
                         path.splitext(attachment['filename'])[1]
                     )
                     # save the image
-                    with open(path.join(config['general']['gallery_folder'], filename), 'wb') as f:
+                    with open(path.join(config.get('general', 'gallery_folder'), filename), 'wb') as f:
                         r.raw.decode_content = True
                         copyfileobj(r.raw, f)
-    # TODO: Automattically upload to a gallery of CMDR submitted images.
+    # TODO: Automatically upload to a gallery of CMDR submitted images.
 
 
 # Create another background loop to automatically post new GALNET Articles
@@ -102,34 +107,118 @@ async def galnet_loop():
     # while the bot is connected and running
     while not discord_client.is_closed:
         # get information about the defined channel
-        channel = discord_client.get_channel(config['discord']['news_channel_id'])
+        channel = discord_client.get_channel(config.get('discord', 'news_channel_id'))
 
         # get galnet articles from api endpoint and load json data
-        r = requests.get(config['elite']['galnet_api'])
+        r = requests.get(config.get('elite', 'galnet_api'))
         data = r.json()
 
         # extract the date the article was posted and convert it to a datetime object
-        latest_post_datetime = moment.utc(data[0]['date'], 'DD MMM YYY')
+        latest_post_datetime = moment.utc(data[0]['date'], 'DD MMM YYY').locale("UTC")
 
         # create the embed that contains the article
         embed = discord.Embed(title=data[0]['title'], description=data[0]['content'].replace("<br /><br />  ", "\n\n"))
         embed.set_author(name="Galnet News", url="https://community.elitedangerous.com/en/galnet")
-        embed.add_field(name="Post Date", value=data[0]['date'])
+        if config.getboolean('wordpress', 'news_timestamp_use_igt'):
+            timestamp = latest_post_datetime.subtract(years=1286)
+        else:
+            timestamp = latest_post_datetime
+        embed.add_field(name="Post Date", value=timestamp.format('DD MMM YYY'))
 
         # if this is our first run or there is a new article post the latest article
         if not galnet_last_modified or (galnet_last_modified and galnet_last_modified < latest_post_datetime):
             logger.info("New galnet article found. Posting to discord.")
             # update the last modified time
             galnet_last_modified = latest_post_datetime
-            discord_client.send_message(channel, content=config['discord']['new_news_message'], embed=embed)
+            discord_client.send_message(channel, content=config.get('discord', 'new_news_message'), embed=embed)
 
         # wait for the defined time before checking again
-        await asyncio.sleep(delay=int(config['elite']['check_interval']))
+        discord_client.send_message(channel, content="Ping")
+        await asyncio.sleep(delay=config.getint('elite', 'check_interval'))
 
 
-# add the galnet loop to the discord bot
-discord_client.loop.create_task(galnet_loop())
+# Create another background loop to automatically post new GALNET Articles
+async def rss_news_loop():
+    # wait for the discord bot to be ready
+    await discord_client.wait_until_ready()
+    logger.info("Starting RSS News loop")
+    rss_last_modified = ""
+    rss_etag = ""
+
+    # while the bot is connected and running
+    while not discord_client.is_closed:
+        # get information about the defined channel
+        channel = discord_client.get_channel(config.get('discord', 'news_channel_id'))
+
+        # get news articles from rss feed
+        feedurl = "{0}/feed".format(config.get('wordpress', 'url'))
+        feed = feedparser.parse(feedurl)
+
+        # If we parse successfully then post the latest article
+        if (
+                feed['status'] == 200
+                or (
+                (feed['status'] >= 301 and feed['status'] <= 304)
+                or (feed['status'] >= 307 and feed['status'] <= 308)
+        )
+        ):
+            # extract the date the article was posted and convert it to a datetime object
+            latest_post_datetime = moment.date(feed['updated'])
+
+            # create the embed that contains the article
+            embed = discord.Embed(title=feed['entries'][0]['title'],
+                                  description=feed['entries'][0]['content'][0]['value'])
+            embed.set_author(name="{0} News".format(feed['feed']['title']), url=feed['feed']['links'][1]['href'])
+            if config.getboolean('wordpress', 'news_timestamp_use_igt'):
+                timestamp = latest_post_datetime.timezone("UTC")
+            else:
+                timestamp = latest_post_datetime
+            embed.add_field(name="Post Date", value=timestamp.format('DD MMM YYY'))
+            embed.add_field(name='Author', value=feed['entries'][0]['author'])
+            embed.add_field(name="Permalink", value=feed['entries'][0]['id'])
+
+            # if this is our first run or there is a new article post the latest article
+            if (
+                    (not rss_last_modified or not rss_etag)
+                    or (
+                    (rss_last_modified and rss_last_modified < latest_post_datetime)
+                    and (rss_etag and not rss_etag == feed['etag'])
+            )
+            ):
+                logger.info("New news article found. Posting to discord.")
+                # update the last modified time and etag
+                rss_last_modified = latest_post_datetime
+                rss_etag = feed['etag']
+                discord_client.send_message(channel, content=config.get('discord', 'new_news_message'), embed=embed)
+
+        else:
+            logger.error("Unable to load feed from {0}".format(feedurl))
+
+        # wait for the defined time before checking again
+        discord_client.send_message(channel, content="Pong")
+        await asyncio.sleep(delay=int(config.get('elite', 'check_interval')))
+
+
+async def test_loop():
+    # wait for the discord bot to be ready
+    await discord_client.wait_until_ready()
+    logger.info("Starting Test Loop")
+    # get information about the defined channel
+    channel = discord_client.get_channel(117448759863934977)
+    discord_client.send_message(channel, content="Ping")
+    await asyncio.sleep(delay=10)
+
+
+# add the galnet loop and news loop to the discord bot if enabled
+if config.getboolean('general', 'post_galnet_news'):
+    logger.info("Enabling GALNET News loop")
+    discord_client.loop.create_task(galnet_loop())
+    # if config.getboolean('general', 'post_website_news'):
+    logger.info("Enabling RSS News loop")
+    discord_client.loop.create_task(rss_news_loop())
+
+discord_client.loop.create_task(test_loop())
 
 # run the bot
 if __name__ == "__main__":
-    discord_client.run(config['discord']['auth_token'])
+    discord_client.run(config.get('discord', 'auth_token'))
