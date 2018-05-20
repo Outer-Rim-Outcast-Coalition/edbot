@@ -58,6 +58,49 @@ async def on_ready():
     logger.info("READY")
 
 
+# Listen for new messages
+@discord_client.event
+async def on_message(message):
+    # get config variables
+    scrape_gallery = config.getboolean('general', 'scrape_gallery', fallback=False)
+    gallery_channel_id = config.get('discord', 'gallery_channel_id', fallback=None)
+    gallery_folder = config.get('general', 'gallery_folder')
+
+    # we do not want the bot to reply to itself so we ignore any messages that it sends
+    if message.author == discord_client.user:
+        return
+
+    # listen for new messages in the defined gallery channel that have attachments.
+    elif (
+            scrape_gallery
+            and message.channel.id == gallery_channel_id
+            and message.attachments
+    ):
+        logger.info("New gallery post by {0}".format(message.author))
+        # iterate over attachments in the message
+        for attachment in message.attachments:
+            logger.info("Image URL: {0}".format(attachment['url']))
+            # get the filetype of attachment based on it's filename
+            filetype = (mimetypes.guess_type(attachment['filename'])[0]).split("/")[0]
+
+            # if the attachment is an image
+            if filetype == 'image':
+                # get the attachment
+                r = requests.get(attachment['url'], stream=True)
+                # if successful
+                if r.status_code == 200:
+                    # build a filename based on who uploaded it and when
+                    filename = "{0}-{1}{2}".format(
+                        message.author.name,
+                        moment.date(message.timestamp).strftime("%Y-%m-%dT%H.%M.%S"),
+                        path.splitext(attachment['filename'])[1]
+                    )
+                    # save the image
+                    with open(path.join(gallery_folder, filename), 'wb') as f:
+                        r.raw.decode_content = True
+                        copyfileobj(r.raw, f)
+    # TODO: Automatically upload to a gallery of CMDR submitted images.
+
 # Create a background loop to automatically post new GALNET Articles
 async def galnet_loop():
     # wait for the discord bot to be ready
