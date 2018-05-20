@@ -1,29 +1,34 @@
 [general]
-log_level = INFO
+# Logging verbosity for bot. (One of DEBUG, INFO, WARNING, ERROR, FATAL)
+log_level = DEBUG
+#file to store log output in
 log_file = edbot.log
-#Folder to save images posted to gallery
+# Folder to store scraped images from gallery
 gallery_folder = Gallery
-scrape_gallery = True
+# Primary Timezone that your players play in. If global suggested value is UTC.
+timezone = UTC
+scrape_gallery = False # Feature in progress
 post_galnet_news = True
-
+post_website_news = True
+#Use Universal Galactic Time (In game time) for news post timestamps
+news_timestamp_use_ugt = True
+# Seconds between checks for new news posts (minutes * 60 = check_interval)
+check_interval = 1800
 
 [discord]
-# Bot auth token. Can be found in your bots information at https://discordapp.com/developers/applications/me
+# Discord bot auth_token
 auth_token =
-# Type \#<channel name> into discord chat to get the channel ID.
-# Paste only the numbers below not the surrounding "<#" and ">"
+# Channel ID for gallery channel
 gallery_channel_id =
+# Channel ID for news Channel
 news_channel_id =
-new_news_message = "@here"
+# Message to include with every news post
+new_news_message = @here
 
 [elite]
+# URL for json feed of GALNET articles
 galnet_api = https://www.alpha-orbital.com/galnet-feed
-# Length in seconds to wait between checks for new galnet articles
-check_interval = 300
 
-#NOT IMPLEMENTED YET
 [wordpress]
-url =
-# Use elite dangerous IGT for rss news timestamps
-news_timestamp_use_igt = True
-
+# Base URL for wordpress website.
+url = https://ooc.space

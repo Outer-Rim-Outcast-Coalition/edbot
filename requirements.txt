@@ -3,3 +3,5 @@ requests
 asyncio
 feedparser
 moment
+aiohttp
+markdownify
